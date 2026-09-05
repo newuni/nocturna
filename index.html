@@ -166,7 +166,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       flightUnitsPerSecond: 110,
       fieldDepth: 2200,
       fieldRadius: 1250,
-      seed: 18273,
+      seed: null, // Fija un entero para repetir un viaje concreto.
       maxPixelRatio: 1.75,
       shootingStars: true
     });
@@ -218,8 +218,9 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       fail('La sesión gráfica se ha interrumpido. Pulsa «Volver a intentar» para recuperar el cielo.');
     });
 
-    // Un generador reproducible mantiene la misma composición al recargar.
-    let seed = CONFIG.seed;
+    // Cada visita empieza un viaje nuevo; una semilla explícita permite reproducirlo.
+    const journeySeed = CONFIG.seed ?? Math.floor(Math.random()*4294967296);
+    let seed = journeySeed;
     function random() {
       seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
       let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
@@ -231,72 +232,93 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     const camera = new THREE.PerspectiveCamera(60, 1, 0.1, CONFIG.fieldDepth + 150);
     camera.position.set(0, 0, 0);
 
-    // Capa de nebulosa: ruido fractal en GPU, sin descargar ninguna imagen.
-    const backgroundScene = new THREE.Scene();
+    const compact = matchMedia('(max-width: 700px)').matches;
     const screenCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-    const backgroundUniforms = {
-      uTime: { value: 0 }, uAspect: { value: 1 },
-      uLight: { value: light }, uLook: { value: new THREE.Vector2() }
-    };
     const screenVertex = `
       varying vec2 vUv;
       void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }
     `;
+    // Densidad continua en el espacio: integrar el rayo de cada píxel a través
+    // del volumen produce perspectiva y paralaje, sin una textura pegada al cielo.
+    // Solo la niebla se dibuja a resolución reducida; las estrellas siguen nítidas.
+    const backgroundScene = new THREE.Scene();
+    const backgroundUniforms = {
+      uDistance: { value: 0 }, uAspect: { value: 1 }, uLight: { value: light },
+      uSeed: { value: (journeySeed % 8192) / 13 },
+      uCameraWorld: { value: camera.matrixWorld }
+    };
     const background = new THREE.ShaderMaterial({
       uniforms: backgroundUniforms, depthTest: false, depthWrite: false,
       vertexShader: screenVertex,
       fragmentShader: `
         varying vec2 vUv;
-        uniform float uTime, uAspect, uLight;
-        uniform vec2 uLook;
-        float hash(vec2 p) {
-          vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-          p3 += dot(p3, p3.yzx + 33.33);
-          return fract((p3.x + p3.y) * p3.z);
+        uniform float uDistance, uAspect, uLight, uSeed;
+        uniform mat4 uCameraWorld;
+        float hash(vec3 p) {
+          p = fract(p * 0.1031);
+          p += dot(p,p.yzx + 33.33);
+          return fract((p.x+p.y)*p.z);
         }
-        float noise(vec2 p) {
-          vec2 i = floor(p), f = fract(p);
-          f = f * f * (3.0 - 2.0 * f);
-          return mix(mix(hash(i), hash(i + vec2(1,0)), f.x),
-                     mix(hash(i + vec2(0,1)), hash(i + vec2(1,1)), f.x), f.y);
-        }
-        float fbm(vec2 p) {
-          float value = 0.0, weight = 0.5;
-          mat2 rotation = mat2(0.8, -0.6, 0.6, 0.8);
-          for (int i = 0; i < 5; i++) {
-            value += weight * noise(p);
-            p = rotation * p * 2.03 + 7.1;
-            weight *= 0.5;
-          }
-          return value;
+        float noise(vec3 p) {
+          vec3 i = floor(p), f = fract(p);
+          f = f*f*(3.0-2.0*f);
+          return mix(
+            mix(mix(hash(i),hash(i+vec3(1,0,0)),f.x),
+                mix(hash(i+vec3(0,1,0)),hash(i+vec3(1,1,0)),f.x),f.y),
+            mix(mix(hash(i+vec3(0,0,1)),hash(i+vec3(1,0,1)),f.x),
+                mix(hash(i+vec3(0,1,1)),hash(i+vec3(1,1,1)),f.x),f.y),f.z);
         }
         void main() {
-          vec2 p = (vUv - 0.5) * vec2(uAspect, 1.0);
-          p += uLook * 0.024;
-          float t = uTime * 0.0025;
-          vec2 q = p * 2.1 + vec2(t, -t * 0.4);
-          float warp = fbm(q + 3.7);
-          float clouds = fbm(q * 2.8 + warp * 2.1);
-          float bandAxis = p.y - p.x * 0.36 + 0.04;
-          float band = exp(-pow((bandAxis + (warp - 0.5) * 0.25) * 3.1, 2.0));
-          float density = pow(clouds, 2.1) * band;
-          float filaments = fbm(q * 6.0 - warp * 2.0);
-          vec3 ink = mix(vec3(0.020,0.024,0.050), vec3(0.046,0.038,0.068), vUv.y);
-          vec3 plum = vec3(0.28,0.12,0.22);
-          vec3 amber = vec3(0.39,0.23,0.135);
-          float warmth = smoothstep(-0.7,0.8,p.x + warp * 0.5);
-          vec3 color = ink + mix(plum,amber,warmth) * density * 0.66;
-          color += vec3(0.12,0.15,0.29) * pow(filaments,3.0) * band * 0.28;
-          color *= 1.0 - 0.35 * smoothstep(0.05,0.5,length(p * vec2(0.45,0.7)));
-          color *= 0.7 + uLight * 0.6;
-          color += (hash(gl_FragCoord.xy) - 0.5) / 255.0;
-          gl_FragColor = vec4(color,1.0);
+          vec2 ndc = vUv*2.0-1.0;
+          vec3 viewRay = normalize(vec3(ndc*vec2(uAspect,1.0)*0.57735027,-1.0));
+          vec3 ray = normalize((uCameraWorld*vec4(viewRay,0.0)).xyz);
+          vec3 origin = uCameraWorld[3].xyz + vec3(0,0,-uDistance);
+          vec3 color = vec3(0.012,0.016,0.030);
+          vec3 emission = vec3(0);
+          float transmittance = 1.0;
+          const float stepLength = 170.0;
+          float jitter = hash(vec3(gl_FragCoord.xy,7.3));
+          for (int i=0; i<20; i++) {
+            float distance = (float(i)+0.5+jitter*0.6)*stepLength;
+            vec3 world = origin + ray*distance;
+            vec3 q = world*vec3(0.00135,0.00185,0.0011) + vec3(uSeed,17.0,-9.0);
+            float large = noise(q*0.44+vec3(3,9,2));
+            float detail = noise(q*2.17+vec3(5,1,8));
+            float field = noise(q+vec3(large*0.8,detail*0.3,0));
+            float density = smoothstep(0.48,0.83,field*0.73+detail*0.27);
+            density *= smoothstep(0.27,0.7,large) * 0.14;
+            density *= smoothstep(40.0,300.0,distance)
+                     * (1.0-smoothstep(2400.0,3500.0,distance));
+            float alpha = 1.0-exp(-density*stepLength*0.002);
+            vec3 tint = mix(vec3(0.22,0.28,0.44),vec3(0.44,0.25,0.19),
+                            smoothstep(0.35,0.72,large));
+            tint = mix(tint,vec3(0.35,0.20,0.34),detail*0.28);
+            emission += transmittance*alpha*tint;
+            transmittance *= 1.0-alpha;
+          }
+          color = color*transmittance + emission*(0.45+uLight*0.6);
+          color += (hash(vec3(gl_FragCoord.xy,19.1))-0.5)/255.0;
+          gl_FragColor = vec4(max(color,vec3(0)),1.0);
         }
       `
     });
-    backgroundScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), background));
+    backgroundScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2),background));
+    const nebulaTarget = new THREE.WebGLRenderTarget(1,1,{
+      minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+      depthBuffer: false, stencilBuffer: false
+    });
+    const compositeScene = new THREE.Scene();
+    const compositeMaterial = new THREE.ShaderMaterial({
+      uniforms: { uNebula: { value: nebulaTarget.texture } },
+      depthTest: false, depthWrite: false, vertexShader: screenVertex,
+      fragmentShader: `
+        varying vec2 vUv;
+        uniform sampler2D uNebula;
+        void main() { gl_FragColor = texture2D(uNebula,vUv); }
+      `
+    });
+    compositeScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2),compositeMaterial));
 
-    const compact = matchMedia('(max-width: 700px)').matches;
     const count = compact ? CONFIG.starsMobile : CONFIG.starsDesktop;
     const positions = new Float32Array(count * 3);
     const colors = new Float32Array(count * 3);
@@ -309,7 +331,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     ];
 
     // Un volumen delante de la cámara: las estrellas se acercan y pasan a los lados.
-    // Cada estrella vuelve al fondo con otro ángulo al completar su recorrido.
+    // Al volver al fondo se regeneran posición, tamaño y matiz, por regiones espaciales.
     for (let i = 0; i < count; i++) {
       const radius = 10 + Math.sqrt(random()) * CONFIG.fieldRadius;
       const theta = random() * Math.PI * 2;
@@ -339,10 +361,10 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     starGeometry.setAttribute('aPhase', new THREE.InstancedBufferAttribute(phases, 1));
     starGeometry.setAttribute('aFrequency', new THREE.InstancedBufferAttribute(frequencies, 1));
     starGeometry.instanceCount = count;
-    const goldenAngle = 2.39996323;
     const starUniforms = {
       uTime: { value: 0 }, uDpr: { value: 1 }, uLight: { value: light },
-      uTravel: { value: 0 }, uCycleAngle: { value: 0 },
+      uTravel: { value: 0 }, uGeneration: { value: 0 },
+      uRadius: { value: CONFIG.fieldRadius },
       uDepth: { value: CONFIG.fieldDepth },
       uVelocity: { value: speed * CONFIG.flightUnitsPerSecond },
       uResolution: { value: new THREE.Vector2(1, 1) }
@@ -353,17 +375,35 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       vertexShader: `
         attribute vec3 aPosition, aColor;
         attribute float aSize, aPhase, aFrequency;
-        uniform float uTime, uDpr, uTravel, uDepth, uVelocity, uCycleAngle;
+        uniform float uTime, uDpr, uTravel, uDepth, uVelocity, uGeneration, uRadius;
         uniform vec2 uResolution;
         varying vec3 vColor;
         varying vec2 vLocal;
         varying float vTwinkle, vFlare, vTail;
+        vec3 hash33(vec3 p) {
+          p = fract(p*vec3(0.1031,0.1030,0.0973));
+          p += dot(p,p.yxz+33.33);
+          return fract((p.xxy+p.yxx)*p.zyx);
+        }
         void main() {
           float progress = aPosition.z + uTravel;
           float depth = uDepth - mod(progress,uDepth) + 8.0;
-          float angle = uCycleAngle + floor(progress/uDepth) * 2.39996323;
-          mat2 rotate = mat2(cos(angle),sin(angle),-sin(angle),cos(angle));
-          vec2 xy = rotate * aPosition.xy;
+          float generation = uGeneration + floor(progress/uDepth);
+          vec3 roll = hash33(vec3(aPosition.xy*0.031,generation+aPhase*11.0));
+          vec3 character = hash33(vec3(aPhase,aSize,generation+73.0));
+          // La región pertenece a la posición mundial de la estrella, no al reloj.
+          // Cúmulos y claros permanecen estables mientras atravesamos cada zona.
+          float region = ((generation+1.0)*uDepth-aPosition.z)/1400.0;
+          float cell = floor(region);
+          vec3 profile = mix(hash33(vec3(cell,7,31)),hash33(vec3(cell+1.0,7,31)),
+                             smoothstep(0.0,1.0,fract(region)));
+          float angle = roll.y*6.28318531;
+          float radius = 10.0+sqrt(roll.x)*uRadius;
+          vec2 xy = vec2(cos(angle),sin(angle))*radius;
+          if (roll.z < 0.30+profile.z*0.38) {
+            xy = xy*(0.24+profile.z*0.34) + (profile.xy-0.5)*uRadius*0.85;
+          }
+          float starSize = aSize*(0.65+character.y*0.85);
           vec4 headView = modelViewMatrix * vec4(xy,-depth,1.0);
           vec4 tailView = modelViewMatrix * vec4(xy,-depth-uVelocity*0.055,1.0);
           vec4 headClip = projectionMatrix * headView;
@@ -374,7 +414,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
           float motionLength = length(motion);
           vec2 direction = motionLength > 0.0001 ? motion/motionLength : vec2(0,1);
           vec2 normal = vec2(-direction.y,direction.x);
-          float diameter = clamp(aSize * 650.0 / max(30.0,-headView.z),2.0,85.0) * uDpr;
+          float diameter = clamp(starSize * 650.0 / max(30.0,-headView.z),2.0,85.0) * uDpr;
           float tailLength = min(motionLength,diameter*5.0+36.0*uDpr);
           vec2 local = vec2(mix(-tailLength-diameter*0.5,diameter*0.5,uv.x),(uv.y-0.5)*diameter);
           vec2 offset = (direction*local.x+normal*local.y) * 2.0/uResolution;
@@ -382,11 +422,13 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
           gl_Position.xy += offset * headClip.w;
           vLocal = local/diameter;
           vTail = tailLength/diameter;
-          vColor = aColor;
+          vec3 localTint = mix(vec3(0.72,0.83,1.0),vec3(1.0,0.79,0.60),
+                               clamp(character.x*0.65+profile.z*0.35,0.0,1.0));
+          vColor = mix(aColor,localTint,0.55);
           float fade = smoothstep(8.0,34.0,depth)
                      * (1.0-smoothstep(uDepth*0.90,uDepth,depth));
-          vTwinkle = (0.84 + 0.16 * sin(uTime*aFrequency+aPhase)) * fade * step(0.1,headClip.w);
-          vFlare = smoothstep(10.0,18.0,aSize);
+          vTwinkle = (0.84 + 0.16 * sin(uTime*aFrequency+aPhase+character.z*6.28)) * fade * step(0.1,headClip.w);
+          vFlare = smoothstep(10.0,18.0,starSize);
         }
       `,
       fragmentShader: `
@@ -468,9 +510,14 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 
     function render() {
       if (fatal) return;
+      camera.updateMatrixWorld(true);
+      renderer.setRenderTarget(nebulaTarget);
       renderer.clear();
       renderer.render(backgroundScene, screenCamera);
+      renderer.setRenderTarget(null);
       if (fatal) return;
+      renderer.clear();
+      renderer.render(compositeScene, screenCamera);
       renderer.render(scene, camera);
       if (meteorUniforms.uAlpha.value > 0 && !fatal) renderer.render(meteorScene, screenCamera);
     }
@@ -484,6 +531,8 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
       backgroundUniforms.uAspect.value = camera.aspect;
+      const fogScale = Math.min(0.5,640/width,640/height);
+      nebulaTarget.setSize(Math.max(1,Math.round(width*fogScale)),Math.max(1,Math.round(height*fogScale)));
       meteorUniforms.uAspect.value = camera.aspect;
       starUniforms.uDpr.value = dpr;
       starUniforms.uResolution.value.set(width * dpr, height * dpr);
@@ -499,15 +548,14 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       travel += dt * speed * CONFIG.flightUnitsPerSecond;
       // Mantener pequeñas las coordenadas del shader evita perder precisión tras horas de vuelo.
       starUniforms.uTravel.value = travel % CONFIG.fieldDepth;
-      starUniforms.uCycleAngle.value = (Math.floor(travel / CONFIG.fieldDepth) * goldenAngle) % (Math.PI * 2);
+      starUniforms.uGeneration.value = Math.floor(travel / CONFIG.fieldDepth);
       const easing = 1 - Math.exp(-dt * 1.9);
       camera.rotation.y += (pointer.x * -0.22 - camera.rotation.y) * easing;
       camera.rotation.x += (pointer.y * -0.14 - camera.rotation.x) * easing;
       camera.rotation.z += (pointer.x * -0.012 - camera.rotation.z) * easing;
       camera.position.x += (pointer.x * 8 - camera.position.x) * easing;
       camera.position.y += (pointer.y * -5 - camera.position.y) * easing;
-      backgroundUniforms.uLook.value.set(camera.rotation.y, camera.rotation.x);
-      backgroundUniforms.uTime.value = travel / CONFIG.flightUnitsPerSecond;
+      backgroundUniforms.uDistance.value = travel;
       starUniforms.uTime.value = elapsed;
       updateMeteor();
       render();
