@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#090914">
-  <meta name="description" content="Un campo de estrellas en Three.js: luz cálida, nebulosas y una deriva tranquila. Un solo HTML, sin conexión.">
-  <title>Nocturna · Campo de estrellas</title>
+  <meta name="description" content="Vuela entre las estrellas: un viaje continuo en Three.js con luz cálida, nebulosas y velocidad regulable. Un solo HTML, sin conexión.">
+  <title>Nocturna · Viaje entre estrellas</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%23090914'/%3E%3Cpath d='M32 9l5 18 18 5-18 5-5 18-5-18-18-5 18-5z' fill='%23ebc49c'/%3E%3C/svg%3E">
   <style>
     :root { color-scheme: dark; --cream: #f3e7d7; --muted: #c4b6ae; --accent: #e6ba91; }
@@ -64,17 +64,18 @@
       .hint { max-width: 290px; }
       .bottom { gap: 14px; }
     }
-    @media (max-width: 370px) { output { display: none; } .subtitle { margin-left: 0; } }
+    @media (max-width: 400px) { output { display: none; } }
+    @media (max-width: 370px) { .subtitle { margin-left: 0; } }
     @media (max-height: 460px) { header { top: 14px; } .subtitle, .hint { display: none; } .bottom { bottom: 12px; } .controls { padding-top: 10px; padding-bottom: 10px; } }
     @media (prefers-reduced-motion: reduce) { .chrome { transition: none; } }
   </style>
 </head>
 <body>
-  <main id="sky" role="img" aria-label="Campo de estrellas tridimensional con una nebulosa cálida. Puedes pausar el movimiento con los controles."></main>
+  <main id="sky" role="img" aria-label="Vuelo continuo hacia delante entre estrellas tridimensionales y una nebulosa cálida. Puedes pausar el viaje con los controles."></main>
   <header class="chrome">
     <div class="identity">
       <h1 class="wordmark"><span aria-hidden="true">✧</span>Nocturna</h1>
-      <p class="subtitle">Campo de estrellas</p>
+      <p class="subtitle">Viaje entre estrellas</p>
     </div>
     <button id="hide-ui" class="quiet-button" type="button" title="Ocultar controles (H)">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5m6 0h5v5M4 15v5h5m6 0h5v-5"/></svg>
@@ -82,15 +83,15 @@
     </button>
   </header>
   <div class="bottom chrome">
-    <p class="hint">Mueve el cursor o desliza para mirar.</p>
+    <p class="hint">Mueve el cursor o desliza para orientar el vuelo.</p>
     <div class="controls" role="group" aria-label="Ajustes del cielo">
-      <button id="pause" class="icon-button" type="button" aria-label="Pausar movimiento" aria-pressed="false" title="Pausar movimiento (Espacio)">
+      <button id="pause" class="icon-button" type="button" aria-label="Pausar vuelo" aria-pressed="false" title="Pausar vuelo (Espacio)">
         <svg id="pause-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14" stroke-width="3"/></svg>
         <svg id="play-icon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="m9 5 11 7-11 7Z" fill="currentColor" stroke="none"/></svg>
       </button>
       <div>
-        <label class="range-label" for="speed">Deriva <output id="speed-value" for="speed">0,6×</output></label>
-        <input id="speed" type="range" min="0" max="2" step="0.05" value="0.6" aria-label="Velocidad de deriva">
+        <label class="range-label" for="speed">Velocidad <output id="speed-value" for="speed">1×</output></label>
+        <input id="speed" type="range" min="0" max="3" step="0.05" value="1" aria-label="Velocidad de vuelo">
       </div>
       <div>
         <label class="range-label" for="glow">Luz <output id="glow-value" for="glow">65 %</output></label>
@@ -158,10 +159,13 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     'use strict';
 
     const CONFIG = Object.freeze({
-      starsDesktop: 10500,
-      starsMobile: 6500,
-      initialSpeed: 0.6,
+      starsDesktop: 7200,
+      starsMobile: 4400,
+      initialSpeed: 1,
       initialLight: 0.65,
+      flightUnitsPerSecond: 110,
+      fieldDepth: 2200,
+      fieldRadius: 1250,
       seed: 18273,
       maxPixelRatio: 1.75,
       shootingStars: true
@@ -177,7 +181,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     let speed = CONFIG.initialSpeed;
     let light = CONFIG.initialLight;
     let elapsed = 0;
-    let drift = 0;
+    let travel = 0;
     let previousTime = performance.now();
     const pointer = { x: 0, y: 0, down: false, lastX: 0, lastY: 0 };
 
@@ -224,10 +228,8 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     }
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1800);
+    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, CONFIG.fieldDepth + 150);
     camera.position.set(0, 0, 0);
-    const skyGroup = new THREE.Group();
-    scene.add(skyGroup);
 
     // Capa de nebulosa: ruido fractal en GPU, sin descargar ninguna imagen.
     const backgroundScene = new THREE.Scene();
@@ -306,79 +308,113 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       [1.00,0.72,0.57], [0.90,0.82,1.00]
     ];
 
-    // Un volumen 3D alrededor de la cámara; algunas estrellas forman una banda.
+    // Un volumen delante de la cámara: las estrellas se acercan y pasan a los lados.
+    // Cada estrella vuelve al fondo con otro ángulo al completar su recorrido.
     for (let i = 0; i < count; i++) {
-      const radius = 180 + Math.pow(random(), 0.55) * 1120;
-      let x, y, z;
-      if (random() < 0.32) {
-        const theta = random() * Math.PI * 2;
-        const latitude = (random() + random() + random() - 1.5) * 0.22;
-        x = Math.cos(theta) * Math.cos(latitude);
-        y = Math.sin(latitude);
-        z = Math.sin(theta) * Math.cos(latitude);
-        const rotatedX = x * Math.cos(0.35) - y * Math.sin(0.35);
-        y = x * Math.sin(0.35) + y * Math.cos(0.35);
-        x = rotatedX;
-      } else {
-        y = random() * 2 - 1;
-        const theta = random() * Math.PI * 2;
-        const r = Math.sqrt(1 - y * y);
-        x = r * Math.cos(theta); z = r * Math.sin(theta);
-      }
-      positions.set([x * radius, y * radius, z * radius], i * 3);
+      const radius = 10 + Math.sqrt(random()) * CONFIG.fieldRadius;
+      const theta = random() * Math.PI * 2;
+      positions.set([
+        Math.cos(theta) * radius,
+        Math.sin(theta) * radius,
+        random() * CONFIG.fieldDepth
+      ], i * 3);
       const color = palette[Math.floor(random() * palette.length)];
       colors.set(color, i * 3);
       const magnitude = random();
-      sizes[i] = magnitude > 0.986 ? 12 + random() * 7 : 1.8 + Math.pow(magnitude, 3) * 6.5;
+      sizes[i] = magnitude > 0.985 ? 11 + random() * 5 : 2.0 + Math.pow(magnitude, 2) * 6;
       phases[i] = random() * Math.PI * 2;
       frequencies[i] = 0.3 + random() * 0.7;
     }
-    const starGeometry = new THREE.BufferGeometry();
-    starGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    starGeometry.setAttribute('aColor', new THREE.BufferAttribute(colors, 3));
-    starGeometry.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
-    starGeometry.setAttribute('aPhase', new THREE.BufferAttribute(phases, 1));
-    starGeometry.setAttribute('aFrequency', new THREE.BufferAttribute(frequencies, 1));
-    const starUniforms = { uTime: { value: 0 }, uDpr: { value: 1 }, uLight: { value: light } };
+    // Cuadriláteros instanciados: cada halo puede extenderse en una estela de vuelo.
+    // La perspectiva y el reciclado se calculan en GPU, sin mover miles de objetos JS.
+    const starGeometry = new THREE.InstancedBufferGeometry();
+    starGeometry.setIndex([0, 1, 2, 0, 2, 3]);
+    starGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
+      -0.5,-0.5,0, 0.5,-0.5,0, 0.5,0.5,0, -0.5,0.5,0
+    ], 3));
+    starGeometry.setAttribute('uv', new THREE.Float32BufferAttribute([0,0, 1,0, 1,1, 0,1], 2));
+    starGeometry.setAttribute('aPosition', new THREE.InstancedBufferAttribute(positions, 3));
+    starGeometry.setAttribute('aColor', new THREE.InstancedBufferAttribute(colors, 3));
+    starGeometry.setAttribute('aSize', new THREE.InstancedBufferAttribute(sizes, 1));
+    starGeometry.setAttribute('aPhase', new THREE.InstancedBufferAttribute(phases, 1));
+    starGeometry.setAttribute('aFrequency', new THREE.InstancedBufferAttribute(frequencies, 1));
+    starGeometry.instanceCount = count;
+    const goldenAngle = 2.39996323;
+    const starUniforms = {
+      uTime: { value: 0 }, uDpr: { value: 1 }, uLight: { value: light },
+      uTravel: { value: 0 }, uCycleAngle: { value: 0 },
+      uDepth: { value: CONFIG.fieldDepth },
+      uVelocity: { value: speed * CONFIG.flightUnitsPerSecond },
+      uResolution: { value: new THREE.Vector2(1, 1) }
+    };
     const starMaterial = new THREE.ShaderMaterial({
       uniforms: starUniforms, transparent: true,
       blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
       vertexShader: `
-        attribute vec3 aColor;
+        attribute vec3 aPosition, aColor;
         attribute float aSize, aPhase, aFrequency;
-        uniform float uTime, uDpr;
+        uniform float uTime, uDpr, uTravel, uDepth, uVelocity, uCycleAngle;
+        uniform vec2 uResolution;
         varying vec3 vColor;
-        varying float vTwinkle, vFlare;
+        varying vec2 vLocal;
+        varying float vTwinkle, vFlare, vTail;
         void main() {
-          vec4 viewPosition = modelViewMatrix * vec4(position,1.0);
-          gl_Position = projectionMatrix * viewPosition;
-          float depth = clamp(650.0 / max(140.0,-viewPosition.z),0.65,1.7);
-          gl_PointSize = clamp(aSize * depth * uDpr,1.8,36.0);
+          float progress = aPosition.z + uTravel;
+          float depth = uDepth - mod(progress,uDepth) + 8.0;
+          float angle = uCycleAngle + floor(progress/uDepth) * 2.39996323;
+          mat2 rotate = mat2(cos(angle),sin(angle),-sin(angle),cos(angle));
+          vec2 xy = rotate * aPosition.xy;
+          vec4 headView = modelViewMatrix * vec4(xy,-depth,1.0);
+          vec4 tailView = modelViewMatrix * vec4(xy,-depth-uVelocity*0.055,1.0);
+          vec4 headClip = projectionMatrix * headView;
+          vec4 tailClip = projectionMatrix * tailView;
+          vec2 headNdc = headClip.xy / max(headClip.w,0.001);
+          vec2 tailNdc = tailClip.xy / max(tailClip.w,0.001);
+          vec2 motion = (headNdc-tailNdc) * uResolution * 0.5;
+          float motionLength = length(motion);
+          vec2 direction = motionLength > 0.0001 ? motion/motionLength : vec2(0,1);
+          vec2 normal = vec2(-direction.y,direction.x);
+          float diameter = clamp(aSize * 650.0 / max(30.0,-headView.z),2.0,85.0) * uDpr;
+          float tailLength = min(motionLength,diameter*5.0+36.0*uDpr);
+          vec2 local = vec2(mix(-tailLength-diameter*0.5,diameter*0.5,uv.x),(uv.y-0.5)*diameter);
+          vec2 offset = (direction*local.x+normal*local.y) * 2.0/uResolution;
+          gl_Position = headClip;
+          gl_Position.xy += offset * headClip.w;
+          vLocal = local/diameter;
+          vTail = tailLength/diameter;
           vColor = aColor;
-          vTwinkle = 0.78 + 0.22 * sin(uTime * aFrequency + aPhase);
+          float fade = smoothstep(8.0,34.0,depth)
+                     * (1.0-smoothstep(uDepth*0.90,uDepth,depth));
+          vTwinkle = (0.84 + 0.16 * sin(uTime*aFrequency+aPhase)) * fade * step(0.1,headClip.w);
           vFlare = smoothstep(10.0,18.0,aSize);
         }
       `,
       fragmentShader: `
         uniform float uLight;
         varying vec3 vColor;
-        varying float vTwinkle, vFlare;
+        varying vec2 vLocal;
+        varying float vTwinkle, vFlare, vTail;
         void main() {
-          vec2 p = gl_PointCoord - 0.5;
+          vec2 p = vLocal;
           float r = length(p);
-          if (r > 0.5) discard;
           float core = exp(-r * r * 160.0);
           float halo = exp(-r * r * 18.0) * 0.20;
           float rays = (exp(-abs(p.x) * 115.0) + exp(-abs(p.y) * 115.0))
                      * exp(-r * 8.0) * vFlare * 0.23;
           float edge = 1.0 - smoothstep(0.38,0.5,r);
-          float alpha = (core + halo + rays) * edge * vTwinkle * (0.24 + uLight * 1.1);
+          float along = clamp((p.x+vTail)/max(vTail,0.0001),0.0,1.0);
+          float segment = step(-vTail,p.x) * (1.0-step(0.0,p.x));
+          float streak = (exp(-p.y*p.y*350.0)*0.42 + exp(-p.y*p.y*50.0)*0.075)
+                       * pow(along,1.8) * segment * smoothstep(0.02,0.35,vTail);
+          float alpha = ((core + halo + rays) * edge + streak) * vTwinkle * (0.24 + uLight * 1.1);
+          if (alpha < 0.001) discard;
           gl_FragColor = vec4(vColor, alpha);
         }
       `
     });
-    const stars = new THREE.Points(starGeometry, starMaterial);
-    skyGroup.add(stars);
+    const stars = new THREE.Mesh(starGeometry, starMaterial);
+    stars.frustumCulled = false;
+    scene.add(stars);
 
     // Una estela ocasional. La animación y los destellos se detienen al pausar.
     const meteorScene = new THREE.Scene();
@@ -450,6 +486,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       backgroundUniforms.uAspect.value = camera.aspect;
       meteorUniforms.uAspect.value = camera.aspect;
       starUniforms.uDpr.value = dpr;
+      starUniforms.uResolution.value.set(width * dpr, height * dpr);
       render();
     }
 
@@ -459,16 +496,18 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       const dt = Math.min((now - previousTime) / 1000, 0.05);
       previousTime = now;
       elapsed += dt;
-      drift += dt * speed;
-      skyGroup.rotation.y = drift * 0.003;
-      skyGroup.rotation.z = Math.sin(drift * 0.014) * 0.022;
+      travel += dt * speed * CONFIG.flightUnitsPerSecond;
+      // Mantener pequeñas las coordenadas del shader evita perder precisión tras horas de vuelo.
+      starUniforms.uTravel.value = travel % CONFIG.fieldDepth;
+      starUniforms.uCycleAngle.value = (Math.floor(travel / CONFIG.fieldDepth) * goldenAngle) % (Math.PI * 2);
       const easing = 1 - Math.exp(-dt * 1.9);
-      camera.rotation.y += (pointer.x * -0.16 - camera.rotation.y) * easing;
-      camera.rotation.x += (pointer.y * -0.10 - camera.rotation.x) * easing;
-      camera.position.x += (pointer.x * 3.5 - camera.position.x) * easing;
-      camera.position.y += (pointer.y * -2.5 - camera.position.y) * easing;
+      camera.rotation.y += (pointer.x * -0.22 - camera.rotation.y) * easing;
+      camera.rotation.x += (pointer.y * -0.14 - camera.rotation.x) * easing;
+      camera.rotation.z += (pointer.x * -0.012 - camera.rotation.z) * easing;
+      camera.position.x += (pointer.x * 8 - camera.position.x) * easing;
+      camera.position.y += (pointer.y * -5 - camera.position.y) * easing;
       backgroundUniforms.uLook.value.set(camera.rotation.y, camera.rotation.x);
-      backgroundUniforms.uTime.value = drift;
+      backgroundUniforms.uTime.value = travel / CONFIG.flightUnitsPerSecond;
       starUniforms.uTime.value = elapsed;
       updateMeteor();
       render();
@@ -483,7 +522,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     function updatePauseButton() {
       $('pause-icon').toggleAttribute('hidden', paused);
       $('play-icon').toggleAttribute('hidden', !paused);
-      const label = paused ? 'Reanudar movimiento' : 'Pausar movimiento';
+      const label = paused ? 'Reanudar vuelo' : 'Pausar vuelo';
       $('pause').setAttribute('aria-label', label);
       $('pause').setAttribute('aria-pressed', String(paused));
       $('pause').title = label + ' (Espacio)';
@@ -492,7 +531,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       paused = value;
       updatePauseButton();
       startLoop();
-      announce(paused ? 'Movimiento en pausa.' : 'Movimiento reanudado.');
+      announce(paused ? 'Vuelo en pausa.' : 'Vuelo reanudado.');
     }
     $('pause').addEventListener('click', () => setPaused(!paused));
     reduceMotion.addEventListener('change', () => { if (reduceMotion.matches) setPaused(true); });
@@ -519,6 +558,8 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       $('speed-value').value = label;
       $('speed').setAttribute('aria-valuetext', label);
       paintRange($('speed'));
+      starUniforms.uVelocity.value = speed * CONFIG.flightUnitsPerSecond;
+      if (paused) render();
     }
     function updateLight() {
       light = Number($('glow').value) / 100;
